@@ -1,4 +1,3 @@
-import NIOCore
 
 extension EventLoopFuture where Value: Sequence {
     /// Calls a closure on each element in the sequence that is wrapped by an `EventLoopFuture`.

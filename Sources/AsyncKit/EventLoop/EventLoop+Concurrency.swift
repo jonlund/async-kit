@@ -1,4 +1,3 @@
-import NIOCore
 
 extension EventLoop {
     /// Run the `async` function `body` on this event loop and return its result as

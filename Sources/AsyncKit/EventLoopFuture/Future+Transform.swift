@@ -1,4 +1,3 @@
-import NIOCore
 
 extension EventLoopFuture {
     /// Maps the current future to contain the new type. Errors are carried over, successful (expected) results are transformed into the given instance.

@@ -1,4 +1,3 @@
-import NIOCore
 
 extension EventLoopGroup {
     /// An alternate name for this would be `future(catching:)`, but with that

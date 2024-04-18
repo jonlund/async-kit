@@ -1,4 +1,3 @@
-import NIOCore
 
 extension EventLoopFuture {
     /// Returns a new `EventLoopFuture` that succeeds only if all of the provided fs succeed.

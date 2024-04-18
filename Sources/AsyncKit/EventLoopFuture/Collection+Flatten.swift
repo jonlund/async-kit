@@ -1,4 +1,3 @@
-import NIOCore
 
 extension Collection {
     /// Converts a collection of `EventLoopFuture`s to an `EventLoopFuture` that wraps an array with the future values.

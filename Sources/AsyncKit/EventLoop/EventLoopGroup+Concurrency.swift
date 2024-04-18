@@ -1,4 +1,3 @@
-import NIOCore
 
 extension EventLoopGroup {
     /// Run the `async` function `body` on an event loop in this group and return its

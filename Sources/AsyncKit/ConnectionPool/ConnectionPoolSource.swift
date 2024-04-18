@@ -1,5 +1,3 @@
-import NIOCore
-import struct Logging.Logger
 
 /// Source of new connections for `ConnectionPool`.
 public protocol ConnectionPoolSource {

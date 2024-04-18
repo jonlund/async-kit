@@ -1,4 +1,3 @@
-import NIOCore
 
 extension EventLoop {
     /// Returns a new `EventLoopFuture` that succeeds only when all the provided futures succeed.

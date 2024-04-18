@@ -1,8 +1,3 @@
-import Atomics
-import struct Logging.Logger
-import struct Foundation.UUID
-import NIOCore
-import Collections
 
 /// Holds a collection of active connections that can be requested and later released
 /// back into the pool.

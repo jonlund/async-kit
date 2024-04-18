@@ -1,4 +1,3 @@
-import NIOCore
 
 extension EventLoopFuture {
     // MARK: - Guard

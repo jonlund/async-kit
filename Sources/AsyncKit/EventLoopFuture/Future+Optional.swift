@@ -1,4 +1,3 @@
-import NIOCore
 
 extension EventLoopFuture {
     /// Calls a closure on an optional value that is wrapped in an `EventLoopFuture` if it exists.

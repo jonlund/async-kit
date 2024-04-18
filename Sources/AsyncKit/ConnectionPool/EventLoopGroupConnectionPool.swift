@@ -1,7 +1,3 @@
-import struct Logging.Logger
-import NIOConcurrencyHelpers
-import NIOCore
-import Dispatch
 
 /// Holds a collection of connection pools for each `EventLoop` on an `EventLoopGroup`.
 ///
