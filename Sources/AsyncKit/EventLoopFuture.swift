@@ -18,7 +18,8 @@ public class Future<T> {
 	private var result: Result<T, Error>?
 	private var completionHandlers: [(Result<T, Error>) -> Void] = []
 	private var successHandlers: [(T) -> Void] = []
-	
+	private var errorHandlers: [(Error) -> Void] = []
+
 	public init() {}
 	
 	public func complete(with result: Result<T,Error>) {
@@ -30,8 +31,10 @@ public class Future<T> {
 		for handler in completionHandlers {
 			handler(result)
 		}
-		if case .success(let value) = result {
-			successHandlers.forEach { $0(value) }
+
+		switch result {
+		case .success(let value): successHandlers.forEach { $0(value) }
+		case .failure(let error): errorHandlers.forEach { $0(error) }
 		}
 		completionHandlers = []
 	}
@@ -96,12 +99,39 @@ public class Future<T> {
 		completionHandlers.append(callbackMayBlock)
 	}
 	
+	public func whenSuccess(_ callbackMayBlock: @escaping (T) -> Void) {
+		successHandlers.append(callbackMayBlock)
+	}
+
 	public func whenSuccessBlocking(onto queue: DispatchQueue, _ callbackMayBlock: @escaping (T) -> Void) {
 		successHandlers.append(callbackMayBlock)
 	}
-	
-	public func transform<T>(to instance: @escaping @autoclosure () -> T) -> EventLoopFuture<T> {
+
+	public func whenFailureBlocking(onto queue: DispatchQueue, _ callbackMayBlock: @escaping (Error) -> Void) {
+		errorHandlers.append(callbackMayBlock)
+	}
+
+	public func transform<T>(to instance: @escaping @autoclosure () -> T) -> Future<T> {
 		return self.map { _ in instance() }
+	}
+	
+	public func flatMapThrowing(_ callback: @escaping (T) throws -> Void) -> Future<T> {
+		let promise = Promise<T>()
+		self.addCompletionHandler { result in
+			switch result {
+			case .success(let value):
+				do {
+					try callback(value)
+					promise.succeed(value)
+				}
+				catch {
+					promise.fail(error)
+				}
+			case .failure(let error):
+				promise.fail(error)
+			}
+		}
+		return promise.futureResult
 	}
 }
 
@@ -175,6 +205,10 @@ public struct EventLoop {
 		return Promise<T>()
 	}
 	
+	public func future<T>(_ value: T) -> Future<T> {
+		return makeSucceededFuture(value)
+	}
+	
 	@inlinable
 	public func makeSucceededFuture<Success>(_ value: Success) -> Future<Success> {
 		let f = Future<Success>()
@@ -192,6 +226,18 @@ public struct EventLoop {
 	public func flatten<T>(_ futures: [Future<T>]) -> Future<[T]> {
 		return futures.flatten(on: self)
 	}
+	
+	@inlinable
+	public func makeFailedFuture<T>(_ error: Error) -> Future<T> {
+		let f = Future<T>()
+		f.complete(with: .failure(error))
+		return f
+	}
+	
+	@discardableResult
+	@preconcurrency
+	func scheduleTask<T>(in: TimeAmount, _ task: @escaping @Sendable () throws -> T) -> Scheduled<T>
+
 }
 
 public struct MultiThreadedEventLoopGroup {
