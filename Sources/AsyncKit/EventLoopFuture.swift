@@ -15,11 +15,13 @@ public typealias EventLoopFuture = Future
 public typealias EventLoopPromise = Promise
 
 public class Future<T> {
+	typealias Element = T
+	
 	private var result: Result<T, Error>?
 	private var completionHandlers: [(Result<T, Error>) -> Void] = []
 	private var successHandlers: [(T) -> Void] = []
 	private var errorHandlers: [(Error) -> Void] = []
-
+	
 	public init() {}
 	
 	public func complete(with result: Result<T,Error>) {
@@ -31,7 +33,7 @@ public class Future<T> {
 		for handler in completionHandlers {
 			handler(result)
 		}
-
+		
 		switch result {
 		case .success(let value): successHandlers.forEach { $0(value) }
 		case .failure(let error): errorHandlers.forEach { $0(error) }
@@ -81,7 +83,25 @@ public class Future<T> {
 		}
 		return newFuture
 	}
+	
+//	@available(*, deprecated, message: "NOT BUILT YET")
+//	@inlinable
+//	public func flatMapBlocking<NewValue>(onto queue: DispatchQueue, _ callbackMayBlock: @escaping (T) throws -> NewValue) -> Future<NewValue> {
+//		//self._flatMapBlocking(onto: queue, callbackMayBlock)
+//		return self.flatMap { result in
+//			switch result {
+//			case .success(let value): ()
+//			case .failure(_): ()
+//			}
+//			fatalError()
+//		}
+//		//fatalError("Not built yet")
+//	}
 
+	public func flatMapBlocking<U>(onto queue: DispatchQueue, transform: @escaping (T) -> Future<U>) -> Future<U> {
+		return self.flatMap(transform: transform)
+	}
+	
 	public func flatMapMaybe() -> Future<T?> {
 		let promise = Promise<Optional<T>>()
 		addCompletionHandler { result in
@@ -94,7 +114,11 @@ public class Future<T> {
 		}
 		return promise.futureResult
 	}
-
+	
+	public func whenComplete(_ callbackMayBlock: @escaping (Result<T, Error>) -> Void) {
+		completionHandlers.append(callbackMayBlock)
+	}
+	
 	public func whenCompleteBlocking(onto queue: DispatchQueue, _ callbackMayBlock: @escaping (Result<T, Error>) -> Void) {
 		completionHandlers.append(callbackMayBlock)
 	}
@@ -102,27 +126,31 @@ public class Future<T> {
 	public func whenSuccess(_ callbackMayBlock: @escaping (T) -> Void) {
 		successHandlers.append(callbackMayBlock)
 	}
-
+	
 	public func whenSuccessBlocking(onto queue: DispatchQueue, _ callbackMayBlock: @escaping (T) -> Void) {
 		successHandlers.append(callbackMayBlock)
+	}
+	
+	public func whenFailure(_ callbackMayBlock: @escaping (Error) -> Void) {
+		errorHandlers.append(callbackMayBlock)
 	}
 
 	public func whenFailureBlocking(onto queue: DispatchQueue, _ callbackMayBlock: @escaping (Error) -> Void) {
 		errorHandlers.append(callbackMayBlock)
 	}
-
+	
 	public func transform<T>(to instance: @escaping @autoclosure () -> T) -> Future<T> {
 		return self.map { _ in instance() }
 	}
 	
-	public func flatMapThrowing(_ callback: @escaping (T) throws -> Void) -> Future<T> {
-		let promise = Promise<T>()
+	public func flatMapThrowing<U>(_ callback: @escaping (T) throws -> U) -> Future<U> {
+		let promise = Promise<U>()
 		self.addCompletionHandler { result in
 			switch result {
 			case .success(let value):
 				do {
-					try callback(value)
-					promise.succeed(value)
+					let mapped: U = try callback(value)
+					promise.succeed(mapped)
 				}
 				catch {
 					promise.fail(error)
@@ -133,6 +161,44 @@ public class Future<T> {
 		}
 		return promise.futureResult
 	}
+	
+	public func wait() throws -> T {
+		if let result = result {
+			switch result {
+			case .success(let value):	return value
+			case .failure(let error):	throw error
+			}
+		}
+
+		var awaitedValue: Result<T, Error>? = nil
+		let group = DispatchGroup()
+		group.enter()
+		self.addCompletionHandler { result in
+			awaitedValue = result
+			group.leave()
+		}
+		
+		group.wait()
+
+		guard let result = awaitedValue else {
+			throw AsyncError.systemError
+		}
+		switch result {
+		case .success(let value):	return value
+		case .failure(let error):	throw error
+		}
+	}
+	
+	@inlinable
+	public func unwrap<NewValue>(orError error: Error) -> EventLoopFuture<NewValue> where T == Optional<NewValue> {
+		return self.flatMapThrowing { (value) throws -> NewValue in
+			guard let value = value else {
+				throw error
+			}
+			return value
+		}
+	}
+
 }
 
 
@@ -153,9 +219,11 @@ public class Promise<T> {
 		future.complete(with: .success(value))
 	}
 	
-	@available(*, deprecated, message: "Not built yet")
+	//@available(*, deprecated, message: "Not built yet")
 	public func completeWith(_ future: Future<T>) {
-		assert(false,"Not built")
+		future.whenComplete { result in
+			self.future.complete(with: result)
+		}
 	}
 	
 	func reject(with error: Error) {
@@ -235,9 +303,32 @@ public struct EventLoop {
 	}
 	
 	@discardableResult
-	@preconcurrency
-	func scheduleTask<T>(in: TimeAmount, _ task: @escaping @Sendable () throws -> T) -> Scheduled<T>
+	//@preconcurrency
+	public func scheduleTask<T>(in amt: TimeAmount, _ task: @escaping () -> T) -> Scheduled<T> {
+//		let promise: Promise<T> = .init()
+//		promise.future.addCompletionHandler { result in
+//			switch result {
+//			case .success(let value): try? task()
+//			case .failure(let error): ()
+//			}
+//		}
+//		DispatchQueue.main.asyncAfter(deadline: amt.dispatchTime) {
+//			promise.s
+//		}
+//
+//		return Scheduled(promise: promise) {
+//			promise.fail(AsyncError.canceled)
+//		}
+		let scheduled = Scheduled(task: task)
+		scheduled.scheduleFor(amt: amt)
+		return scheduled
+	}
 
+}
+
+enum AsyncError: Error {
+	case canceled
+	case systemError
 }
 
 public struct MultiThreadedEventLoopGroup {
@@ -253,5 +344,48 @@ public struct MultiThreadedEventLoopGroup {
 	
 	public func future<T>(_ val: T) -> Future<T> {
 		fatalError()
+	}
+}
+
+
+public enum TimeAmount {
+	case seconds(Int)
+	
+	var dispatchTime: DispatchTime {
+		switch self {
+		case .seconds(let s):	return DispatchTime.now() + .seconds(s)
+		}
+	}
+}
+
+
+public class Scheduled<T> {
+//	private let _promise: Promise<T>
+	private var _task: (() -> T)?	// will make nil if cancelled
+//	private let _cancellationTask: () -> Void
+	
+//	public init(promise: Promise<T>, cancellationTask: @escaping () -> Void) {
+//		_promise = promise
+//		_cancellationTask = cancellationTask
+//	}
+
+	public init(task: @escaping () -> T) {
+		_task = task
+		//_cancellationTask = cancellationTask
+	}
+	
+	public func scheduleFor(amt: TimeAmount) {
+		DispatchQueue.main.asyncAfter(deadline: amt.dispatchTime) {
+			self.run()
+		}
+	}
+	
+	internal func run() {
+		self._task?()
+	}
+	
+	public func cancel() {
+		self._task = nil
+		//self._cancellationTask()
 	}
 }
