@@ -14,6 +14,11 @@ import UIKit
 public typealias EventLoopFuture = Future
 public typealias EventLoopPromise = Promise
 
+#if DEBUG
+//internal var futureCount: Int = 0
+internal var futures: [String:Int] = [:]
+#endif
+
 public class Future<T> {
 	typealias Element = T
 	
@@ -22,13 +27,53 @@ public class Future<T> {
 	private var successHandlers: [(T) -> Void] = []
 	private var errorHandlers: [(Error) -> Void] = []
 	
-	public init() {}
+	#if DEBUG
+	private var didComplete: Bool = false
+	private let key: String
+	#endif
 	
+#if DEBUG
+	var futureCount: Int { futures.map({$0.value}).reduce(0) { $0 + $1 } }
+	
+	public init(file: String = #file, function: String = #function, line: Int = #line) {
+		//futureCount += 1
+		key = "\(file) \(function) [Line \(line)]"
+		futures[key] = (futures[key] ?? 0) + 1
+		DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(15)) {
+			if self.didComplete == false {
+				print("\(self.key): future DID NOT complete!")
+				assert(false,"This didn't complete!")
+			}
+			else {
+				print("\(self.key): complete")
+			}
+			print("***** \(self.futureCount)\tOutstanding Futures")
+		}
+	}
+	#else
+	public init() {}
+#endif
+	
+	deinit {
+		#if DEBUG
+		assert(result != nil, "Result must be something non-nil, or it means the promise went out of scope before completion")
+		#endif
+	}
+	
+	
+	// MARK: - Completions
+
 	public func complete(with result: Result<T,Error>) {
 		guard self.result == nil else {
 			assert(false,"Already have a result")
 			return
 		}
+		
+		#if DEBUG
+		//futureCount += 1
+		futures[key] = futures[key]! - 1
+		#endif
+		
 		self.result = result
 		for handler in completionHandlers {
 			handler(result)
@@ -39,6 +84,10 @@ public class Future<T> {
 		case .failure(let error): errorHandlers.forEach { $0(error) }
 		}
 		completionHandlers = []
+		
+		#if DEBUG
+		self.didComplete = true
+		#endif
 	}
 	
 	public func addCompletionHandler(handler: @escaping (Result<T, Error>) -> Void) {
@@ -114,29 +163,57 @@ public class Future<T> {
 		}
 		return promise.futureResult
 	}
-	
+		
 	public func whenComplete(_ callbackMayBlock: @escaping (Result<T, Error>) -> Void) {
-		completionHandlers.append(callbackMayBlock)
+		self.addCompletionHandler(handler: callbackMayBlock)
 	}
 	
 	public func whenCompleteBlocking(onto queue: DispatchQueue, _ callbackMayBlock: @escaping (Result<T, Error>) -> Void) {
-		completionHandlers.append(callbackMayBlock)
+		self.addCompletionHandler(handler: callbackMayBlock)
+	}
+	
+	
+	// MARK: - Successes
+
+	private func _addSuccessHandler(handler: @escaping (T) -> Void) {
+		if let result = result {
+			if case .success(let x) = result {
+				handler(x)
+				return
+			}
+		} else {
+			successHandlers.append(handler)
+		}
 	}
 	
 	public func whenSuccess(_ callbackMayBlock: @escaping (T) -> Void) {
-		successHandlers.append(callbackMayBlock)
+		_addSuccessHandler(handler: callbackMayBlock)
 	}
 	
 	public func whenSuccessBlocking(onto queue: DispatchQueue, _ callbackMayBlock: @escaping (T) -> Void) {
-		successHandlers.append(callbackMayBlock)
+		_addSuccessHandler(handler: callbackMayBlock)
+	}
+	
+	
+	// MARK: - Failures
+	
+	private func _addFailureHandler(handler: @escaping (Error) -> Void) {
+		if let result = result {
+			if case .failure(let x) = result {
+				handler(x)
+				return
+			}
+		} else {
+			errorHandlers.append(handler)
+		}
 	}
 	
 	public func whenFailure(_ callbackMayBlock: @escaping (Error) -> Void) {
-		errorHandlers.append(callbackMayBlock)
+		_addFailureHandler(handler: callbackMayBlock)
 	}
 
 	public func whenFailureBlocking(onto queue: DispatchQueue, _ callbackMayBlock: @escaping (Error) -> Void) {
-		errorHandlers.append(callbackMayBlock)
+		_addFailureHandler(handler: callbackMayBlock)
 	}
 	
 	public func transform<T>(to instance: @escaping @autoclosure () -> T) -> Future<T> {
@@ -207,9 +284,16 @@ public class Promise<T> {
 	
 	public var futureResult: Future<T> { future }
 	
+	#if DEBUG
+	public init(file: String = #file, function: String = #function, line: Int = #line) {
+		future = Future<T>(file: file, function: function, line: line)
+	}
+	#else
 	public init() {
 		future = Future<T>()
 	}
+	#endif
+		
 	
 	public func succeed(_ value: T) {
 		future.complete(with: .success(value))
@@ -243,6 +327,13 @@ extension Array {
 		var completedCount = 0
 		var hasFailed = false
 		
+		if self.count < 1 {
+			DispatchQueue.main.asyncAfter(deadline: .now()) {
+				promise.succeed([])
+			}
+			return promise.future
+		}
+		
 		for (index, future) in self.enumerated() {
 			future.addCompletionHandler { result in
 				switch result {
@@ -268,10 +359,17 @@ extension Array {
 }
 
 public struct EventLoop {
+	#if DEBUG
+	@inlinable
+	public func makePromise<T>(of type: T.Type = T.self, file: String = #file, function: String = #function, line: Int = #line) -> Promise<T> {
+		return Promise<T>(file: file, function: function, line: line)
+	}
+	#else
 	@inlinable
 	public func makePromise<T>(of type: T.Type = T.self) -> Promise<T> {
 		return Promise<T>()
 	}
+	#endif
 	
 	public func future<T>(_ value: T) -> Future<T> {
 		return makeSucceededFuture(value)
@@ -326,9 +424,10 @@ public struct EventLoop {
 
 }
 
-enum AsyncError: Error {
+public enum AsyncError: Error {
 	case canceled
 	case systemError
+	case teapot
 }
 
 public struct MultiThreadedEventLoopGroup {
